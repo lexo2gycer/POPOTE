@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Mijoté – recettes et minuteurs</title>
+<title>Popote – recettes et minuteurs</title>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#F1F4F2;--surface:#fff;--ink:#16221F;--muted:#5D6B67;--line:#D5DDD9;--green:#14504A;--green-ink:#fff;--sun:#F2C230;--sun-ink:#2A2100;--red:#B3261E;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -100,7 +100,7 @@ button:disabled,select:disabled{opacity:.35;cursor:default}
 </head>
 <body>
 <main>
- <div class="brand">Mijoté</div>
+ <div class="brand">Popote</div>
  <nav id="nav"></nav>
  <div id="bar"></div>
  <div id="view"></div>
@@ -127,7 +127,7 @@ const det=s=>[s.heat==="four"?"Four":s.heat==="plaque"?"Plaque":"",(s.power||"")
 const dt=s=>det(s)?`<small class="hint" style="display:block">${esc(det(s))}</small>`:"";
 
 function fit(e){e.style.height="auto";e.style.height=e.scrollHeight+"px"}
-function go(v){view=v;msg="";render()}
+function go(v){view=v;msg="";pmsg="";render()}
 function renderNav(){
  const t=[["list","Recettes"],["edit","Écrire"],["cook","Cuisiner"]];
  $("#nav").innerHTML=t.map(([k,n])=>`<button class="${view===k?"on":""}" onclick="go('${k}')">${n}</button>`).join("");
@@ -175,12 +175,98 @@ function oldListHTML(){
  h+=recipes.map(r=>`<div class="card"><h2>${esc(r.title||"Sans titre")}</h2><p>${r.steps.length} étape${r.steps.length>1?"s":""}, ${r.steps.filter(s=>dur(s)).length} avec minuteur</p><div class="acts" style="margin:0"><button class="btn sm" onclick="openR('${r.id}','cook')">Cuisiner</button><button class="btn sm alt" onclick="openR('${r.id}','edit')">Modifier</button><button class="btn sm alt danger" onclick="delR('${r.id}')">Supprimer</button></div></div>`).join("");
  return h;
 }
+//PARSE-START
+const THERMO={1:30,2:60,3:100,4:120,5:150,6:180,7:210,8:240,9:270,10:300};
+const thStr=n=>`Th. ${n} (${THERMO[n]} °C)`;
+var pmsg="";
+function secs(t){
+ let best=0,m;
+ const a=/(\d+)\s*(?:h|heures?)(?![a-zàâçéèêëîïôûùü])\s*(\d{1,2})?/gi;
+ while((m=a.exec(t)))best=Math.max(best,(+m[1])*3600+(+m[2]||0)*60);
+ const b=/(\d+)\s*(?:(?:à|-|–)\s*\d+\s*)?(?:min(?:utes?)?|mn)(?![a-zàâçéèêëîïôûùü])/gi;
+ while((m=b.exec(t)))best=Math.max(best,(+m[1])*60);
+ const c=/(\d+)\s*(?:secondes?|sec)(?![a-zàâçéèêëîïôûùü])/gi;
+ while((m=c.exec(t)))best=Math.max(best,+m[1]);
+ return best;
+}
+function analyse(t){
+ const s={id:uid(),text:t,min:"",sec:""},n=secs(t);
+ if(n>0){if(n%60===0){s.d=n/60;s.u="min"}else{s.d=n;s.u="s"}}
+ const th=t.match(/(?:thermostat|\bth\.?)\s*(\d{1,2})/i),tc=t.match(/(\d{2,3})\s*(?:°|degr[eé]s?)\s*c?/i),fe=t.match(/feu\s+(tr[eè]s\s+doux|doux|moyen|vif|fort)/i);
+ if(th||tc||/\bfour\b/i.test(t)){
+  s.heat="four";
+  if(th&&THERMO[+th[1]])s.power=thStr(+th[1]);
+  else if(tc){const k=Object.keys(THERMO).find(k=>THERMO[k]===+tc[1]);s.power=k?thStr(k):tc[1]+" °C"}
+ }else if(fe){s.heat="plaque";const w=fe[1].toLowerCase();s.power=/doux/.test(w)?"Feu doux":w==="moyen"?"Feu moyen":"Feu vif"}
+ const tm=t.match(/\b(cocotte|casserole|po[eê]le|sauteuse|wok|moule|plat|grille|plaque (?:du four|[àa] p[âa]tisserie))\b/i);
+ if(tm){const w=tm[1].toLowerCase();s.tool=/cocotte/.test(w)?"Cocotte":/casserole/.test(w)?"Casserole":/po[eê]le|sauteuse|wok/.test(w)?"Poêle":/moule/.test(w)?"Moule":/grille/.test(w)?"Grille":/plaque/.test(w)?"Plaque du four":"Plat"}
+ return s;
+}
+function buildSteps(L){
+ const NUM=/^(?:[ée]tape\s*\d{1,2}|\d{1,2}\s*(?:[.):](?!\d)|-\s|$))/i;
+ if(L.filter(l=>NUM.test(l)).length<2)return null;
+ const strip=l=>l.replace(/^(?:[ée]tape\s*)?\d{1,2}\s*(?:[.):]|-\s)?\s*/i,"").trim();
+ const out=[];let cur=null,pend="";
+ L.forEach((l,i)=>{
+  if(NUM.test(l)){cur={t:strip(l),p:pend};pend="";out.push(cur);return}
+  const isSub=l.length<=40&&!/[.!?:;,]$/.test(l)&&NUM.test(L[i+1]||"");
+  if(cur&&!cur.t){cur.t=l;return}
+  if(cur&&!(isSub&&/[.!?]$/.test(cur.t))){cur.t+=" "+l;return}
+  if(isSub){pend=pend?pend+" "+l:l;return}
+  cur={t:l,p:pend};pend="";out.push(cur);
+ });
+ return out.filter(o=>o.t.trim()).map(o=>(o.p?o.p+" : ":"")+o.t.trim());
+}
+function parseRecipe(raw){
+ const L=raw.replace(/\r/g,"").split("\n").map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
+ const ING=/^ingr[ée]dients?\b/i,STP=/^(?:pr[ée]paration|[ée]tapes|instructions?|r[ée]alisation|m[ée]thode|d[ée]roulement)\b/i,SKIP=/^(?:astuces?|conseils?|notes?|commentaires?|avis|valeurs? nutritionnelles?|nutrition|ustensiles?|mat[ée]riel|vous aimerez|recettes similaires)\b/i;
+ const META1=/^(?:(?:temps|difficult[ée]|co[ûu]t|repos|portions?)\b\s*[:\d]|cuisson\s*:)/i,META2=/^(?:pour\s+\d+|\d+\s*(?:personnes?|parts?|portions?|pers\b))/i;
+ let mode="pre";const pre=[],ing=[],stp=[],B={pre,ing,st:stp};
+ for(const line of L){
+  let m;
+  if(line.length<=70&&(m=line.match(ING)||line.match(STP))){
+   const rest=line.slice(m[0].length).replace(/^[\s:\-–()]+/,"");
+   if(STP.test(line)&&(/^\d/.test(rest)||/^(?:facile|moyen|difficile)/i.test(rest)))continue;
+   mode=ING.test(line)?"ing":"st";
+   if(rest.length>25)B[mode].push(rest);
+   continue;
+  }
+  if(line.length<=40&&SKIP.test(line)){mode="skip";continue}
+  if(line.length<45&&(META1.test(line)||META2.test(line)))continue;
+  if(mode!=="skip")B[mode].push(line);
+ }
+ const cleanI=l=>l.replace(/^[-•*·▪●–—]\s*/,"").trim();
+ const isLab=l=>/^(?:[ée]tape\s*)?\d{1,2}\s*[.:]?$/i.test(l);
+ const cleanS=l=>l.replace(/^(?:[-•*·▪●–—]|(?:[ée]tape\s*)?\d{1,2}\s*(?:[.):]|-\s)|[ée]tape\s*\d{1,2})\s*/i,"").trim();
+ const isIng=l=>l.length<100&&/^[-•*·▪●]?\s*(?:\d|[½¼¾])/.test(l)&&!/^\d+\s*[.)]\s/.test(l)&&!/^\d+\s*(?:min|mn|h\b|heures?|secondes?|°)/i.test(l);
+ let title="";
+ const pickTitle=a=>{const i=a.findIndex(l=>l.length<=80&&!/[.!?]$/.test(l)&&!isIng(l));if(i>=0){title=a[i];a.splice(i,1)}};
+ pickTitle(pre);
+ if(!ing.length&&!stp.length){pre.forEach(l=>{if(!isLab(l))(isIng(l)&&!stp.length?ing:stp).push(l)})}
+ else{if(!ing.length)ing.push(...pre.filter(isIng));if(!stp.length)stp.push(...pre.filter(l=>!isIng(l)))}
+ let steps=buildSteps(stp)||stp.filter(l=>!isLab(l)).map(cleanS).filter(Boolean).reduce((a,l)=>{const p=a[a.length-1];if(p&&/^[a-zàâçéèêëîïôûùü]/.test(l)&&!/[.!?:;]$/.test(p))a[a.length-1]=p+" "+l;else a.push(l);return a},[]);
+ if(steps.length===1&&steps[0].length>200)steps=steps[0].split(/(?<=[.!?])\s+(?=[A-ZÉÈÊÀÂÎÔÛÇ])/);
+ return{title,ing:ing.map(cleanI).filter(Boolean),steps};
+}
+function importPaste(){
+ const raw=$("#paste").value;if(!raw.trim())return;
+ if((cur.ingredients.trim()||cur.steps.some(s=>s.text.trim()))&&!confirm("Remplacer les ingrédients et les étapes actuels ?"))return;
+ const r=parseRecipe(raw);
+ if(r.title)cur.title=r.title;
+ cur.ingredients=r.ing.join("\n");
+ cur.steps=r.steps.length?r.steps.map(analyse):[{id:uid(),text:"",min:"",sec:""}];
+ pmsg=`Recette analysée : ${r.ing.length} ingrédient${r.ing.length>1?"s":""}, ${r.steps.length} étape${r.steps.length>1?"s":""}. Vérifiez et corrigez si besoin.`;
+ render();scrollTo(0,0);
+}
+function webS(){const v=$("#rq").value.trim();if(v)window.open("https://www.google.com/search?q="+encodeURIComponent(v+" recette"),"_blank","noopener")}
+function pasteHTML(){return `${pmsg?`<div class="card" style="margin-top:0">${esc(pmsg)}</div>`:""}<details class="card" style="margin-top:0"><summary><b>Coller une recette complète</b></summary><p class="hint">Collez le texte copié sur un site : Popote sépare les ingrédients et les étapes, et repère les durées, le four et le feu.</p><textarea id="paste" rows="6" placeholder="Collez ici le texte de la recette…"></textarea><div class="acts" style="margin-top:8px"><button class="btn" onclick="importPaste()">Analyser et remplir</button></div><hr style="border:0;border-top:1px solid var(--line);margin:14px 0"><div class="fadd"><input id="rq" placeholder="Chercher une recette (ex. gratin dauphinois)" onkeydown="if(event.key==='Enter')webS()"><button class="btn sm" onclick="webS()">Chercher</button></div><p class="hint">La recherche s’ouvre dans un nouvel onglet : copiez la recette, puis revenez la coller ici.</p></details>`}
+//PARSE-END
 function newR(){cur=blank();if(fold!=="all"&&fold!=="none")cur.folder=fold;go("edit")}
 function openR(id,v){cur=JSON.parse(JSON.stringify(recipes.find(r=>r.id===id)));done=new Set();gotIng=new Set();stepIx=0;go(v)}
 function delR(id){if(!confirm("Supprimer cette recette ?"))return;recipes=recipes.filter(r=>r.id!==id);persist();render()}
 
 function editHTML(){
- return `<input class="title-in" placeholder="Titre de la recette" value="${esc(cur.title)}" oninput="cur.title=this.value">
+ return `${pasteHTML()}<input class="title-in" placeholder="Titre de la recette" value="${esc(cur.title)}" oninput="cur.title=this.value">
  <label class="f">Dossier</label><select style="width:100%" onchange="cur.folder=this.value"><option value="">Sans dossier</option>${(cur.folder&&!folders.includes(cur.folder)?[cur.folder,...folders]:folders).map(f=>`<option value="${esc(f)}"${cur.folder===f?" selected":""}>${esc(f)}</option>`).join("")}</select>${folders.length?"":`<div class="hint">Créez vos dossiers dans l’onglet Recettes.</div>`}
  <label class="f">Ingrédients (un par ligne)</label>
  <textarea placeholder="200 g de farine&#10;3 œufs&#10;…" rows="4" class="auto" oninput="cur.ingredients=this.value;fit(this)">${esc(cur.ingredients)}</textarea>
